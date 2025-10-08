@@ -1,169 +1,261 @@
 # 🔒 ICS/SCADA Network Anomaly Detection
 
-AI-powered system để phát hiện bất thường trong mạng công nghiệp (Industrial Control Systems / SCADA).
+AI-powered system phát hiện tấn công mạng trong môi trường công nghiệp (Industrial Control Systems / SCADA).
 
-## 🎯 Phát hiện các mối đe dọa
+---
 
-✅ **Lateral Movement** - Kẻ tấn công di chuyển ngang trong mạng
-✅ **Data Exfiltration** - Đánh cắp và chuyển dữ liệu ra ngoài  
-✅ **ICS Anomalies** - Hành vi bất thường trong thiết bị SCADA/PLC
+## 🎯 Mục đích
 
-## 🚀 Quick Start
+Phát hiện 3 loại mối đe dọa chính:
+
+1. **Lateral Movement** - Kẻ tấn công di chuyển ngang trong mạng
+2. **Data Exfiltration** - Đánh cắp và chuyển dữ liệu ra ngoài
+3. **ICS Anomalies** - Bất thường trong thiết bị SCADA/PLC
+
+---
+
+## 🚀 Quick Start (3 phút)
 
 ```bash
 # 1. Cài đặt
 pip install -r requirements.txt
 
-# 2. Tạo dữ liệu mẫu
-python scripts/generate_network_data.py
-
-# 3. Train model trên normal traffic
-python train.py --data data/network_traffic.csv
-
-# 4. Phát hiện anomalies
-python detect.py --data data/network_traffic.csv --detailed
+# 2. Chạy demo tự động
+python demo.py
 ```
 
-## 📊 Định dạng Input Data
+Demo sẽ:
+- ✅ Generate 10,000 network flows (normal + anomalies)
+- ✅ Train Isolation Forest model
+- ✅ Detect threats và classify
+- ✅ Generate reports trong `output/`
 
-Hệ thống đọc NetFlow / packet metadata từ CSV, Excel, JSON:
+---
+
+## 📊 Input Data Format
+
+Hệ thống đọc NetFlow/packet metadata từ CSV, Excel, JSON:
 
 ```csv
 timestamp,src_ip,dst_ip,src_port,dst_port,protocol,bytes,packets,duration
 1696789123,10.0.1.100,10.0.1.10,54321,502,TCP,2048,15,1.2
 ```
 
-**Columns:**
+**Required columns:**
 - `timestamp`: Unix timestamp hoặc datetime
 - `src_ip`, `dst_ip`: IP addresses
 - `src_port`, `dst_port`: Port numbers
 - `protocol`: TCP/UDP/ICMP
 - `bytes`: Total bytes transferred
 - `packets`: Packet count
-- `duration`: Connection duration (seconds)
+- `duration`: Flow duration (seconds)
 
-## 🔧 Workflow
+**Export từ:** Wireshark, Zeek, nfdump, Suricata
 
-### 1. Training (Normal Traffic)
+---
 
-```bash
-python train.py --data data/normal_traffic.csv --output output/model.pkl
-```
+## 🔧 Sử dụng
 
-Train model trên dữ liệu **normal traffic** để học baseline behavior.
-
-### 2. Detection (Test Traffic)
+### Option 1: Demo tự động (Recommended)
 
 ```bash
-# Basic detection
-python detect.py --data data/test_traffic.csv
-
-# Detailed threat analysis
-python detect.py --data data/test_traffic.csv --detailed
+python demo.py
 ```
 
-Output files:
-- `output/anomalies_detected.csv` - All anomalies
-- `output/lateral_movement.csv` - Lateral movement events
-- `output/data_exfiltration.csv` - Data exfil attempts
-- `output/ics_anomalies.csv` - ICS-specific issues
+### Option 2: Manual steps
 
-## 📁 Cấu trúc
+```bash
+# Generate sample data
+python scripts/generate_network_data.py
 
-```
-personal-website/
-├── src/
-│   ├── network_loader.py      # Đọc NetFlow data
-│   └── anomaly_detector.py    # ML models
-├── scripts/
-│   └── generate_network_data.py  # Tạo sample data
-├── data/                       # Input data
-├── output/                     # Detection results
-├── train.py                    # Training script
-├── detect.py                   # Detection script
-└── requirements.txt
+# Train model trên normal traffic
+python train.py --data data/network_traffic.csv
+
+# Detect anomalies
+python detect.py --data data/network_traffic.csv --detailed
 ```
 
-## 🎯 ICS Protocols được hỗ trợ
-
-- **Port 102**: Siemens S7
-- **Port 502**: Modbus TCP
-- **Port 2404**: IEC 61850 MMS
-- **Port 20000**: DNP3
-- **Port 44818**: EtherNet/IP
-- **Port 47808**: BACnet
-- **Port 4840**: OPC UA
-
-## 🔍 Detection Methods
-
-### 1. Lateral Movement
-- Một source IP kết nối với nhiều destinations khác nhau
-- Port scanning behavior
-- Failed connection attempts
-
-### 2. Data Exfiltration
-- Large outbound data transfers
-- Connections từ ICS network ra external IPs
-- Unusual upload patterns
-- Transfers vào giờ không bình thường
-
-### 3. ICS Anomalies
-- ICS devices kết nối unexpected hosts
-- ICS traffic vào giờ bất thường (đêm/cuối tuần)
-- Sudden changes trong traffic patterns
-- Non-ICS devices accessing ICS ports
-
-## 📈 Example Output
-
-```
-🔍 GENERAL ANOMALIES: 47 detected (0.47%)
-
-🎯 DETAILED THREAT ANALYSIS
-─────────────────────────────────────────────────
-🚨 Lateral Movement: 3 suspicious activities detected
-🚨 Data Exfiltration: 2 suspicious transfers detected
-🚨 ICS Anomalies: 5 anomaly types detected
-
-🔴 TOP 10 ANOMALIES:
-timestamp            src_ip        dst_ip       dst_port  bytes    anomaly_score
-2025-10-08 09:15:23  10.0.1.100   203.45.67.89  443      50000000  -0.95
-```
-
-## ⚙️ Configuration
-
-Model parameters trong `train.py`:
-
-```python
-contamination=0.05  # Expected % of anomalies (default 5%)
-```
-
-Features được sử dụng:
-- Traffic metrics: bytes, packets, duration
-- Derived features: bytes_per_packet, packets_per_second
-- Protocol features: TCP/UDP, ICS protocols
-- Time features: hour, day_of_week, night/weekend
-- Connection diversity: unique_destinations
-
-## 📊 Performance Tuning
-
-### Contamination Rate
-- **0.01-0.03**: Conservative (ít false positives)
-- **0.05**: Balanced (recommended)
-- **0.10-0.15**: Aggressive (catch more anomalies)
-
-### Feature Selection
-Thêm custom features trong `src/network_loader.py`:
-
-```python
-df['custom_feature'] = ...  # Your feature engineering
-```
-
-## 🐳 Docker (Optional)
+### Option 3: Docker
 
 ```bash
 cd docker
-docker-compose up
+docker-compose up demo
 ```
+
+---
+
+## 📈 Output Files
+
+```
+output/
+├── anomaly_model.pkl          # Trained model
+├── training_metadata.json     # Training info
+├── anomalies_detected.csv     # All anomalies
+├── lateral_movement.csv       # Lateral movement events
+├── data_exfiltration.csv      # Data exfiltration attempts
+└── ics_anomalies.csv         # ICS-specific anomalies
+```
+
+**Anomaly Score:**
+- **< -0.5**: 🔴 High risk (investigate now)
+- **-0.5 to -0.3**: 🟡 Medium risk
+- **> -0.3**: 🟢 Low risk
+
+---
+
+## 🔌 ICS Protocols
+
+System nhận diện các protocol công nghiệp:
+
+| Port  | Protocol     | Use Case |
+|-------|--------------|----------|
+| 102   | Siemens S7   | PLC communication |
+| 502   | Modbus TCP   | Industrial automation |
+| 2404  | IEC 61850    | Substation automation |
+| 20000 | DNP3         | SCADA |
+| 44818 | EtherNet/IP  | Industrial Ethernet |
+| 47808 | BACnet       | Building automation |
+| 4840  | OPC UA       | Industrial IoT |
+
+---
+
+## 🔍 Detection Methods
+
+### Machine Learning
+- **Isolation Forest** (unsupervised)
+- Learns normal baseline
+- Detects deviations automatically
+- No signatures needed
+
+### Rule-based
+- **Lateral Movement**: Multiple destinations + port scanning
+- **Data Exfiltration**: Large outbound + external IPs + unusual time
+- **ICS Anomalies**: Unexpected connections + traffic spikes
+
+---
+
+## ⚙️ Configuration
+
+### Training
+
+```bash
+python train.py \
+  --data data/normal_traffic.csv \
+  --output output/model.pkl \
+  --contamination 0.05  # Expected % anomalies (default 5%)
+```
+
+**Contamination tuning:**
+- `0.01-0.03`: Conservative (low false positives)
+- `0.05`: Balanced ✅ (recommended)
+- `0.10-0.15`: Aggressive (catch more)
+
+### Detection
+
+```bash
+python detect.py \
+  --data data/test_traffic.csv \
+  --model output/model.pkl \
+  --detailed  # Enable threat analysis
+```
+
+---
+
+## 🐳 Docker
+
+### Quick demo
+```bash
+cd docker
+docker-compose up demo
+```
+
+### Separate steps
+```bash
+docker-compose up train   # Train model
+docker-compose up detect  # Detect anomalies
+```
+
+### Custom data
+Edit `docker-compose.yml`:
+```yaml
+command: [
+  "python", "train.py",
+  "--data", "data/your_traffic.csv"
+]
+```
+
+---
+
+## 📁 Project Structure
+
+```
+forecasting-ai/
+├── README.md                  # This file
+├── demo.py                    # Auto demo script
+├── train.py                   # Training script
+├── detect.py                  # Detection script
+├── requirements.txt           # Dependencies
+│
+├── src/
+│   ├── network_loader.py      # Load NetFlow data
+│   └── anomaly_detector.py    # ML models + detection
+│
+├── scripts/
+│   └── generate_network_data.py  # Sample data generator
+│
+├── data/                      # Input data
+├── output/                    # Results
+├── config/                    # Config files
+└── docker/                    # Docker setup
+```
+
+---
+
+## 🎓 How It Works
+
+### Training Phase
+1. Load clean normal traffic
+2. Extract features (traffic metrics, protocols, time, network patterns)
+3. Train Isolation Forest model
+4. Save model to `output/anomaly_model.pkl`
+
+### Detection Phase
+1. Load trained model
+2. Process test traffic
+3. Calculate anomaly scores
+4. Flag deviations from baseline
+5. Classify threats (Lateral Movement, Data Exfil, ICS)
+6. Generate reports
+
+### Features Used
+- Traffic: bytes, packets, duration, bytes_per_packet, packets_per_second
+- Protocol: TCP/UDP, ICS protocols
+- Time: hour, day_of_week, night/weekend
+- Network: unique_destinations, connection diversity
+
+---
+
+## 💡 Best Practices
+
+### Training
+- ✅ Use **clean normal traffic only** (no attacks)
+- ✅ Include diverse traffic (all protocols, devices, times)
+- ✅ Minimum 1000+ flows
+- ✅ Retrain monthly
+
+### Detection
+- ✅ Review top anomalies manually
+- ✅ Tune contamination based on false positive rate
+- ✅ Cross-reference with SIEM/IDS
+- ✅ Prioritize high-score anomalies
+
+### Production
+- ✅ Integrate with SIEM (Splunk, ELK)
+- ✅ Set up alerts for high-risk events
+- ✅ Schedule periodic detection
+- ✅ Maintain incident response playbook
+
+---
 
 ## 🧪 Testing
 
@@ -171,33 +263,52 @@ docker-compose up
 # Generate test data
 python scripts/generate_network_data.py
 
-# Run detection
-python detect.py --data data/network_traffic.csv --detailed
+# Run demo
+python demo.py
+
+# Should detect ~500 anomalies (5%)
 ```
 
-## 📝 Notes
+---
 
-- **Training data**: Chỉ dùng **normal traffic** (không anomalies)
-- **Test data**: Có thể chứa cả normal và anomalous traffic
-- **Contamination**: Điều chỉnh dựa trên expected anomaly rate
-- **Thresholds**: Lateral/Exfil detection dùng 95th percentile
+## 🛠️ Troubleshooting
 
-## 🚨 Security Best Practices
+**No anomalies detected:**
+```bash
+python train.py --contamination 0.10  # Increase to 10%
+```
 
-1. **Baseline**: Train trên clean normal traffic
-2. **Retrain**: Cập nhật model định kỳ (monthly)
-3. **Validation**: Human review top anomalies
-4. **Integration**: Kết hợp với SIEM/SOC
-5. **Alerts**: Set up notifications cho high-score anomalies
+**Too many false positives:**
+```bash
+python train.py --contamination 0.01  # Decrease to 1%
+```
 
-## 📚 Data Sources
+**Import errors:**
+```bash
+pip install -r requirements.txt
+```
 
-Hệ thống đọc data từ các tools:
-- **Wireshark** (Export as CSV)
-- **Zeek/Bro** (conn.log)
-- **nfdump** (NetFlow)
-- **Suricata** (eve.json)
-- **Custom network monitoring tools**
+**File not found:**
+```bash
+python scripts/generate_network_data.py
+```
+
+---
+
+## 📦 Dependencies
+
+```
+pandas==2.1.4          # Data processing
+numpy==1.26.2          # Numerical operations
+scikit-learn==1.3.2    # ML (Isolation Forest)
+joblib==1.3.2          # Model persistence
+openpyxl==3.1.2        # Excel support
+matplotlib==3.8.2      # Visualization
+seaborn==0.13.0        # Plots
+pyyaml==6.0.1          # Config
+```
+
+---
 
 ## 🔗 Integration
 
@@ -207,7 +318,7 @@ Hệ thống đọc data từ các tools:
 from src.anomaly_detector import ICSAnomalyDetector
 
 detector = ICSAnomalyDetector()
-detector.load_model('output/model.pkl')
+detector.load_model('output/anomaly_model.pkl')
 results = detector.predict(your_netflow_data)
 
 # Send to SIEM
@@ -215,6 +326,55 @@ high_risk = results[results['anomaly_score'] < -0.5]
 send_to_siem(high_risk)
 ```
 
+### Continuous Monitoring
+
+```bash
+# Cron job (every hour)
+0 * * * * cd /app && python detect.py --data /data/latest.csv --detailed
+```
+
 ---
 
-**🔐 Protecting ICS/SCADA Networks with AI 🚀**
+## 🚨 Example Results
+
+```
+🔍 GENERAL ANOMALIES: 47 detected (0.47%)
+
+🎯 DETAILED THREAT ANALYSIS
+─────────────────────────────────────────────────
+🚨 Lateral Movement: 3 suspicious activities
+🚨 Data Exfiltration: 2 suspicious transfers
+🚨 ICS Anomalies: 5 anomaly types
+
+🔴 TOP 10 ANOMALIES:
+timestamp            src_ip        dst_ip       bytes    score
+2025-10-08 09:15:23  10.0.1.100   203.45.67.89  5000000  -0.95
+```
+
+---
+
+## 📞 Next Steps
+
+1. **Test**: Run `python demo.py`
+2. **Use your data**: Export NetFlow, train, detect
+3. **Integrate**: Connect to SIEM
+4. **Deploy**: Use Docker for production
+5. **Monitor**: Set up alerts
+
+---
+
+## 🏆 Features
+
+✅ Zero-day detection (behavior-based)
+✅ ICS protocol-aware
+✅ No signatures needed
+✅ Low false positive rate
+✅ Real-time capable
+✅ Production-ready (Docker)
+✅ Interpretable results
+
+---
+
+**🔐 Protect your ICS/SCADA network with AI! 🚀**
+
+Run: `python demo.py`

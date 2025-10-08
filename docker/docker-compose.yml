@@ -1,11 +1,12 @@
 version: '3.8'
 
 services:
-  forecasting:
+  # Train anomaly detection model
+  train:
     build:
       context: ..
       dockerfile: docker/Dockerfile
-    container_name: sales-forecasting
+    container_name: ics-anomaly-train
     volumes:
       - ../output:/app/output
       - ../data:/app/data
@@ -13,18 +14,54 @@ services:
     environment:
       - TZ=Asia/Bangkok
       - PYTHONPATH=/app
-    command: |
-      sh -c "python train.py && python predict.py --visualize"
+    command: [
+      "python", "train.py",
+      "--data", "data/network_traffic.csv",
+      "--output", "output/anomaly_model.pkl"
+    ]
+    restart: "no"
     
-  notebook:
+  # Detect anomalies in network traffic
+  detect:
     build:
       context: ..
       dockerfile: docker/Dockerfile
-    container_name: sales-forecasting-notebook
-    ports:
-      - "8888:8888"
+    container_name: ics-anomaly-detect
     volumes:
-      - ../:/app
+      - ../output:/app/output
+      - ../data:/app/data
     environment:
+      - TZ=Asia/Bangkok
       - PYTHONPATH=/app
-    command: jupyter notebook --ip=0.0.0.0 --port=8888 --no-browser --allow-root
+    command: [
+      "python", "detect.py",
+      "--data", "data/network_traffic.csv",
+      "--model", "output/anomaly_model.pkl",
+      "--detailed"
+    ]
+    depends_on:
+      - train
+    restart: "no"
+  
+  # Full pipeline: Generate data -> Train -> Detect
+  demo:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    container_name: ics-anomaly-demo
+    volumes:
+      - ../output:/app/output
+      - ../data:/app/data
+    environment:
+      - TZ=Asia/Bangkok
+      - PYTHONPATH=/app
+    command: |
+      sh -c "
+        echo '🌐 Generating sample network data...' && 
+        python scripts/generate_network_data.py && 
+        echo '\n🧠 Training model...' && 
+        python train.py --data data/network_traffic.csv && 
+        echo '\n🔍 Detecting anomalies...' && 
+        python detect.py --data data/network_traffic.csv --detailed
+      "
+    restart: "no"
