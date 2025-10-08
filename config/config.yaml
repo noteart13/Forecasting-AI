@@ -1,0 +1,32 @@
+# Configuration for Sales Forecasting System
+data:
+  input_file: "data/AI_Related_To_Business.xlsx"  # or data/sales.csv
+  date_column: "date"
+  target_column: "sales"
+  sku_column: "sku"  # Optional, for multi-product forecasting
+  
+model:
+  type: "prophet"  # Options: prophet, xgboost, both
+  forecast_days: 30
+  
+prophet:
+  seasonality_mode: "multiplicative"
+  changepoint_prior_scale: 0.05
+  yearly_seasonality: true
+  weekly_seasonality: true
+  daily_seasonality: false
+
+xgboost:
+  n_estimators: 100
+  max_depth: 5
+  learning_rate: 0.1
+  
+output:
+  forecast_file: "forecast.csv"
+  model_file: "model.pkl"
+  metrics_file: "metrics.json"
+  plot_file: "forecast.png"
+  
+training:
+  test_size: 0.2
+  validation_split: 0.1

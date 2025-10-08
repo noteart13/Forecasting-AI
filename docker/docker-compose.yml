@@ -1,0 +1,30 @@
+version: '3.8'
+
+services:
+  forecasting:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    container_name: sales-forecasting
+    volumes:
+      - ../output:/app/output
+      - ../data:/app/data
+      - ../config:/app/config
+    environment:
+      - TZ=Asia/Bangkok
+      - PYTHONPATH=/app
+    command: |
+      sh -c "python train.py && python predict.py --visualize"
+    
+  notebook:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    container_name: sales-forecasting-notebook
+    ports:
+      - "8888:8888"
+    volumes:
+      - ../:/app
+    environment:
+      - PYTHONPATH=/app
+    command: jupyter notebook --ip=0.0.0.0 --port=8888 --no-browser --allow-root
