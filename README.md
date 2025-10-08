@@ -34,8 +34,15 @@ Demo sẽ:
 
 ## 📊 Input Data Format
 
-Hệ thống đọc NetFlow/packet metadata từ CSV, Excel, JSON:
+Hệ thống đọc NetFlow/packet metadata từ **CSV, Excel, JSON, PCAP**:
 
+### PCAP Files (Wireshark)
+```bash
+# Phân tích trực tiếp file .pcap từ Wireshark
+python demo_pcap.py --pcap capture.pcap --detailed
+```
+
+### CSV/Excel/JSON Format
 ```csv
 timestamp,src_ip,dst_ip,src_port,dst_port,protocol,bytes,packets,duration
 1696789123,10.0.1.100,10.0.1.10,54321,502,TCP,2048,15,1.2
@@ -50,7 +57,7 @@ timestamp,src_ip,dst_ip,src_port,dst_port,protocol,bytes,packets,duration
 - `packets`: Packet count
 - `duration`: Flow duration (seconds)
 
-**Export từ:** Wireshark, Zeek, nfdump, Suricata
+**Export từ:** Wireshark (.pcap), Zeek, nfdump, Suricata
 
 ---
 
@@ -62,7 +69,18 @@ timestamp,src_ip,dst_ip,src_port,dst_port,protocol,bytes,packets,duration
 python demo.py
 ```
 
-### Option 2: Manual steps
+### Option 2: PCAP Analysis (Wireshark files)
+
+```bash
+# Phân tích file .pcap trực tiếp từ Wireshark
+python demo_pcap.py --pcap your_capture.pcap --detailed
+
+# Hoặc với dữ liệu mẫu
+python scripts/generate_pcap_data.py  # Tạo dữ liệu mẫu
+python demo_pcap.py --pcap data/sample_pcap_data.csv --detailed
+```
+
+### Option 3: Manual steps
 
 ```bash
 # Generate sample data
@@ -75,7 +93,7 @@ python train.py --data data/network_traffic.csv
 python detect.py --data data/network_traffic.csv --detailed
 ```
 
-### Option 3: Docker
+### Option 4: Docker
 
 ```bash
 cd docker
@@ -192,16 +210,18 @@ command: [
 forecasting-ai/
 ├── README.md                  # This file
 ├── demo.py                    # Auto demo script
+├── demo_pcap.py               # PCAP analysis demo
 ├── train.py                   # Training script
 ├── detect.py                  # Detection script
 ├── requirements.txt           # Dependencies
 │
 ├── src/
-│   ├── network_loader.py      # Load NetFlow data
+│   ├── network_loader.py      # Load NetFlow/PCAP data
 │   └── anomaly_detector.py    # ML models + detection
 │
 ├── scripts/
-│   └── generate_network_data.py  # Sample data generator
+│   ├── generate_network_data.py  # Sample data generator
+│   └── generate_pcap_data.py     # PCAP sample data
 │
 ├── data/                      # Input data
 ├── output/                    # Results
@@ -306,6 +326,9 @@ openpyxl==3.1.2        # Excel support
 matplotlib==3.8.2      # Visualization
 seaborn==0.13.0        # Plots
 pyyaml==6.0.1          # Config
+scapy==2.5.0           # PCAP parsing
+dpkt==1.9.8            # Packet analysis
+pyshark==0.6           # Wireshark integration
 ```
 
 ---
