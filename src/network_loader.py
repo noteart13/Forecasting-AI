@@ -93,8 +93,14 @@ class NetworkLoader:
         if 'timestamp' in df.columns:
             # Try Unix timestamp first
             try:
+                # Convert to float first to handle large numbers
+                df['timestamp'] = pd.to_numeric(df['timestamp'], errors='coerce')
+                # Check if timestamp is reasonable (not too large)
+                if df['timestamp'].max() > 2e9:  # Year 2033+, likely microseconds or nanoseconds
+                    logger.warning("Timestamp appears to be in future, adjusting...")
+                    df['timestamp'] = df['timestamp'] / 1000  # Convert from milliseconds
                 df['timestamp'] = pd.to_datetime(df['timestamp'], unit='s')
-            except:
+            except Exception as e:
                 # Try parsing as datetime string
                 try:
                     df['timestamp'] = pd.to_datetime(df['timestamp'])
@@ -146,6 +152,11 @@ class NetworkLoader:
         df['is_well_known'] = (df['dst_port'] < 1024).astype(int)
         
         # 5. Protocol
+        # Check if protocol column exists, if not create default
+        if 'protocol' not in df.columns:
+            logger.warning("⚠️  'protocol' column not found, creating default 'TCP' protocol")
+            df['protocol'] = 'TCP'
+        
         df['is_tcp'] = (df['protocol'].str.upper() == 'TCP').astype(int)
         df['is_udp'] = (df['protocol'].str.upper() == 'UDP').astype(int)
         
@@ -262,8 +273,17 @@ class NetworkLoader:
         
         df = pd.DataFrame(flows)
         
-        # Convert timestamp to datetime
-        df['timestamp'] = pd.to_datetime(df['timestamp'], unit='s')
+        # Convert timestamp to datetime - handle various formats
+        try:
+            df['timestamp'] = pd.to_numeric(df['timestamp'], errors='coerce')
+            # Check if reasonable timestamp (after year 2033 means likely wrong scale)
+            if df['timestamp'].max() > 2e9:
+                logger.warning("Timestamp appears to be in microseconds/milliseconds, adjusting...")
+                df['timestamp'] = df['timestamp'] / 1000
+            df['timestamp'] = pd.to_datetime(df['timestamp'], unit='s', errors='coerce')
+        except Exception as e:
+            logger.warning(f"Timestamp conversion failed: {e}, using sequential time")
+            df['timestamp'] = pd.to_datetime(df['timestamp'], errors='coerce')
         
         # Aggregate flows (group by 5-tuple)
         df = self._aggregate_flows(df)
@@ -336,8 +356,17 @@ class NetworkLoader:
         
         df = pd.DataFrame(flows)
         
-        # Convert timestamp to datetime
-        df['timestamp'] = pd.to_datetime(df['timestamp'], unit='s')
+        # Convert timestamp to datetime - handle various formats
+        try:
+            df['timestamp'] = pd.to_numeric(df['timestamp'], errors='coerce')
+            # Check if reasonable timestamp (after year 2033 means likely wrong scale)
+            if df['timestamp'].max() > 2e9:
+                logger.warning("Timestamp appears to be in microseconds/milliseconds, adjusting...")
+                df['timestamp'] = df['timestamp'] / 1000
+            df['timestamp'] = pd.to_datetime(df['timestamp'], unit='s', errors='coerce')
+        except Exception as e:
+            logger.warning(f"Timestamp conversion failed: {e}, using sequential time")
+            df['timestamp'] = pd.to_datetime(df['timestamp'], errors='coerce')
         
         # Aggregate flows (group by 5-tuple)
         df = self._aggregate_flows(df)
