@@ -1,306 +1,158 @@
 # 🔒 ICS/SCADA Network Anomaly Detection
 
-AI-powered system phát hiện tấn công mạng trong môi trường công nghiệp (Industrial Control Systems / SCADA).
+Hệ thống AI phát hiện tấn công mạng trong môi trường công nghiệp (ICS/SCADA) - Lateral Movement, Data Exfiltration, ICS Anomalies.
 
----
-
-## 🎯 Mục đích
-
-Phát hiện 3 loại mối đe dọa chính:
-
-1. **Lateral Movement** - Kẻ tấn công di chuyển ngang trong mạng
-2. **Data Exfiltration** - Đánh cắp và chuyển dữ liệu ra ngoài
-3. **ICS Anomalies** - Bất thường trong thiết bị SCADA/PLC
-
----
-
-## 🚀 Quick Start (3 phút)
+## 🚀 Quick Start
 
 ```bash
-# 1. Cài đặt
+# 1. Cài đặt dependencies
 pip install -r requirements.txt
 
 # 2. Chạy demo tự động
 python demo.py
-```
 
-Demo sẽ:
-- ✅ Generate 10,000 network flows (normal + anomalies)
-- ✅ Train Isolation Forest model
-- ✅ Detect threats và classify
-- ✅ Generate reports trong `output/`
-
----
-
-## 📊 Input Data Format
-
-Hệ thống đọc NetFlow/packet metadata từ **CSV, Excel, JSON, PCAP**:
-
-### PCAP Files (Wireshark)
-```bash
-# Phân tích trực tiếp file .pcap từ Wireshark
+# 3. Phân tích PCAP từ Wireshark
 python demo_pcap.py --pcap capture.pcap --detailed
 ```
 
-### CSV/Excel/JSON Format
+## 📊 Input Format
+
+**Hỗ trợ:** CSV, Excel, JSON, PCAP/PCAPNG (Wireshark)
+
+**Required columns:**
 ```csv
 timestamp,src_ip,dst_ip,src_port,dst_port,protocol,bytes,packets,duration
 1696789123,10.0.1.100,10.0.1.10,54321,502,TCP,2048,15,1.2
 ```
 
-**Required columns:**
-- `timestamp`: Unix timestamp hoặc datetime
-- `src_ip`, `dst_ip`: IP addresses
-- `src_port`, `dst_port`: Port numbers
-- `protocol`: TCP/UDP/ICMP
-- `bytes`: Total bytes transferred
-- `packets`: Packet count
-- `duration`: Flow duration (seconds)
-
-**Export từ:** Wireshark (.pcap), Zeek, nfdump, Suricata
-
----
-
 ## 🔧 Sử dụng
 
-### Option 1: Demo tự động (Recommended)
-
+### Demo tự động (Recommended)
 ```bash
 python demo.py
 ```
+→ Tự động generate data → train → detect → báo cáo
 
-### Option 2: PCAP Analysis (Wireshark files)
-
+### PCAP Analysis (Wireshark)
 ```bash
-# Phân tích file .pcap trực tiếp từ Wireshark
-python demo_pcap.py --pcap your_capture.pcap --detailed
+python demo_pcap.py --pcap your_file.pcap --detailed
+```
+→ Phân tích trực tiếp file .pcap/.pcapng từ Wireshark
 
-# Hoặc với dữ liệu mẫu
-python scripts/generate_pcap_data.py  # Tạo dữ liệu mẫu
-python demo_pcap.py --pcap data/sample_pcap_data.csv --detailed
+**Tham số:**
+- `--pcap`: Đường dẫn file .pcap/.pcapng
+- `--detailed`: Phân tích chi tiết (Lateral Movement, Data Exfil, ICS)
+- `--model`: Model đã train (optional)
+- `--output`: Thư mục kết quả (default: output/pcap_analysis)
+
+**Lưu ý:** Cần cài đặt thêm:
+```bash
+pip install scapy pyshark
 ```
 
-### Option 3: Manual steps
-
+### Manual Workflow
 ```bash
-# Generate sample data
+# 1. Generate sample data
 python scripts/generate_network_data.py
 
-# Train model trên normal traffic
+# 2. Train model
 python train.py --data data/network_traffic.csv
 
-# Detect anomalies
+# 3. Detect anomalies
 python detect.py --data data/network_traffic.csv --detailed
 ```
-
-### Option 4: Docker
-
-```bash
-cd docker
-docker-compose up demo
-```
-
----
 
 ## 📈 Output Files
 
 ```
 output/
 ├── anomaly_model.pkl          # Trained model
-├── training_metadata.json     # Training info
-├── anomalies_detected.csv     # All anomalies
-├── lateral_movement.csv       # Lateral movement events
-├── data_exfiltration.csv      # Data exfiltration attempts
-└── ics_anomalies.csv         # ICS-specific anomalies
+├── anomalies_detected.csv     # Tất cả anomalies
+├── lateral_movement.csv       # Di chuyển ngang
+├── data_exfiltration.csv      # Đánh cắp dữ liệu
+├── ics_anomalies.csv          # ICS anomalies
+└── attack_summary.txt         # Báo cáo tổng hợp
 ```
 
-**Anomaly Score:**
-- **< -0.5**: 🔴 High risk (investigate now)
-- **-0.5 to -0.3**: 🟡 Medium risk
-- **> -0.3**: 🟢 Low risk
+**Anomaly Score:** < -0.5 (🔴 High) | -0.5 to -0.3 (🟡 Medium) | > -0.3 (🟢 Low)
 
----
+## 🔌 ICS Protocols Supported
 
-## 🔌 ICS Protocols
-
-System nhận diện các protocol công nghiệp:
-
-| Port  | Protocol     | Use Case |
-|-------|--------------|----------|
+| Port  | Protocol     | Mô tả |
+|-------|--------------|-------|
 | 102   | Siemens S7   | PLC communication |
 | 502   | Modbus TCP   | Industrial automation |
 | 2404  | IEC 61850    | Substation automation |
-| 20000 | DNP3         | SCADA |
+| 20000 | DNP3         | SCADA systems |
 | 44818 | EtherNet/IP  | Industrial Ethernet |
-| 47808 | BACnet       | Building automation |
 | 4840  | OPC UA       | Industrial IoT |
 
----
+## 🎯 Detection Methods
 
-## 🔍 Detection Methods
+**Machine Learning:** Isolation Forest (unsupervised) - học baseline, phát hiện deviation tự động
 
-### Machine Learning
-- **Isolation Forest** (unsupervised)
-- Learns normal baseline
-- Detects deviations automatically
-- No signatures needed
+**Rule-based Detection:**
 
-### Rule-based
-- **Lateral Movement**: Multiple destinations + port scanning
-- **Data Exfiltration**: Large outbound + external IPs + unusual time
-- **ICS Anomalies**: Unexpected connections + traffic spikes
+### 1. Lateral Movement
+- Port scanning (scan nhiều ports)
+- Host scanning (scan nhiều hosts)
+- Multiple destinations trong thời gian ngắn
+- Output: `lateral_score`, `is_port_scan`, `is_host_scan`, `is_high_risk`
 
----
+### 2. Data Exfiltration
+- Upload traffic lớn bất thường
+- Connections ra external IPs
+- Transfers vào giờ đêm/cuối tuần
+- Output: `exfil_score`, `mb_transferred`, `is_large_transfer`, `is_unusual_time`
+
+### 3. ICS Anomalies
+- ICS devices → external IPs (🚨 CRITICAL)
+- Non-ICS devices → ICS ports (🚨 CRITICAL)
+- ICS traffic vào giờ bất thường
+- Sudden traffic volume changes
+- Output: `type`, `severity` (low/medium/high/critical), `count`, `description`
 
 ## ⚙️ Configuration
 
 ### Training
-
 ```bash
-python train.py \
-  --data data/normal_traffic.csv \
-  --output output/model.pkl \
-  --contamination 0.05  # Expected % anomalies (default 5%)
+python train.py --data data/normal_traffic.csv --contamination 0.05
 ```
-
-**Contamination tuning:**
-- `0.01-0.03`: Conservative (low false positives)
-- `0.05`: Balanced ✅ (recommended)
-- `0.10-0.15`: Aggressive (catch more)
+- `0.01-0.03`: Conservative (ít false positive)
+- `0.05`: Balanced ✅
+- `0.10-0.15`: Aggressive (phát hiện nhiều)
 
 ### Detection
-
 ```bash
-python detect.py \
-  --data data/test_traffic.csv \
-  --model output/model.pkl \
-  --detailed  # Enable threat analysis
+python detect.py --data data/test.csv --model output/model.pkl --detailed
 ```
 
----
-
-## 🐳 Docker
-
-### Quick demo
-```bash
-cd docker
-docker-compose up demo
-```
-
-### Separate steps
-```bash
-docker-compose up train   # Train model
-docker-compose up detect  # Detect anomalies
-```
-
-### Custom data
-Edit `docker-compose.yml`:
-```yaml
-command: [
-  "python", "train.py",
-  "--data", "data/your_traffic.csv"
-]
-```
-
----
-
-## 📁 Project Structure
+## 📁 Cấu trúc Project
 
 ```
 forecasting-ai/
-├── README.md                  # This file
-├── demo.py                    # Auto demo script
-├── demo_pcap.py               # PCAP analysis demo
-├── train.py                   # Training script
-├── detect.py                  # Detection script
-├── requirements.txt           # Dependencies
-│
+├── demo.py, demo_pcap.py      # Demo scripts
+├── train.py, detect.py         # Training & Detection
+├── requirements.txt            # Dependencies
 ├── src/
-│   ├── network_loader.py      # Load NetFlow/PCAP data
-│   └── anomaly_detector.py    # ML models + detection
-│
+│   ├── network_loader.py       # Load data (CSV/PCAP)
+│   └── anomaly_detector.py     # ML models + detection logic
 ├── scripts/
-│   ├── generate_network_data.py  # Sample data generator
-│   └── generate_pcap_data.py     # PCAP sample data
-│
-├── data/                      # Input data
-├── output/                    # Results
-├── config/                    # Config files
-└── docker/                    # Docker setup
+│   └── generate_network_data.py
+├── data/                       # Input files
+└── output/                     # Results
 ```
-
----
-
-## 🎓 How It Works
-
-### Training Phase
-1. Load clean normal traffic
-2. Extract features (traffic metrics, protocols, time, network patterns)
-3. Train Isolation Forest model
-4. Save model to `output/anomaly_model.pkl`
-
-### Detection Phase
-1. Load trained model
-2. Process test traffic
-3. Calculate anomaly scores
-4. Flag deviations from baseline
-5. Classify threats (Lateral Movement, Data Exfil, ICS)
-6. Generate reports
-
-### Features Used
-- Traffic: bytes, packets, duration, bytes_per_packet, packets_per_second
-- Protocol: TCP/UDP, ICS protocols
-- Time: hour, day_of_week, night/weekend
-- Network: unique_destinations, connection diversity
-
----
-
-## 💡 Best Practices
-
-### Training
-- ✅ Use **clean normal traffic only** (no attacks)
-- ✅ Include diverse traffic (all protocols, devices, times)
-- ✅ Minimum 1000+ flows
-- ✅ Retrain monthly
-
-### Detection
-- ✅ Review top anomalies manually
-- ✅ Tune contamination based on false positive rate
-- ✅ Cross-reference with SIEM/IDS
-- ✅ Prioritize high-score anomalies
-
-### Production
-- ✅ Integrate with SIEM (Splunk, ELK)
-- ✅ Set up alerts for high-risk events
-- ✅ Schedule periodic detection
-- ✅ Maintain incident response playbook
-
----
-
-## 🧪 Testing
-
-```bash
-# Generate test data
-python scripts/generate_network_data.py
-
-# Run demo
-python demo.py
-
-# Should detect ~500 anomalies (5%)
-```
-
----
 
 ## 🛠️ Troubleshooting
 
-**No anomalies detected:**
+**Không phát hiện anomaly:**
 ```bash
-python train.py --contamination 0.10  # Increase to 10%
+python train.py --contamination 0.10  # Tăng lên 10%
 ```
 
-**Too many false positives:**
+**Quá nhiều false positive:**
 ```bash
-python train.py --contamination 0.01  # Decrease to 1%
+python train.py --contamination 0.01  # Giảm xuống 1%
 ```
 
 **Import errors:**
@@ -308,96 +160,49 @@ python train.py --contamination 0.01  # Decrease to 1%
 pip install -r requirements.txt
 ```
 
-**File not found:**
+**PCAP errors:**
 ```bash
-python scripts/generate_network_data.py
+# Lỗi "No module named 'scapy'"
+pip install scapy pyshark
+
+# File .pcap không đọc được
+# → Kiểm tra format .pcap/.pcapng
+# → Thử file nhỏ hơn (< 100MB)
+# → Kiểm tra quyền đọc file
 ```
 
----
-
-## 📦 Dependencies
-
-```
-pandas==2.1.4          # Data processing
-numpy==1.26.2          # Numerical operations
-scikit-learn==1.3.2    # ML (Isolation Forest)
-joblib==1.3.2          # Model persistence
-openpyxl==3.1.2        # Excel support
-matplotlib==3.8.2      # Visualization
-seaborn==0.13.0        # Plots
-pyyaml==6.0.1          # Config
-scapy==2.5.0           # PCAP parsing
-dpkt==1.9.8            # Packet analysis
-pyshark==0.6           # Wireshark integration
-```
-
----
-
-## 🔗 Integration
-
-### With SIEM
-
-```python
-from src.anomaly_detector import ICSAnomalyDetector
-
-detector = ICSAnomalyDetector()
-detector.load_model('output/anomaly_model.pkl')
-results = detector.predict(your_netflow_data)
-
-# Send to SIEM
-high_risk = results[results['anomaly_score'] < -0.5]
-send_to_siem(high_risk)
-```
-
-### Continuous Monitoring
-
-```bash
-# Cron job (every hour)
-0 * * * * cd /app && python detect.py --data /data/latest.csv --detailed
-```
-
----
-
-## 🚨 Example Results
+## 🚨 Example Output
 
 ```
 🔍 GENERAL ANOMALIES: 47 detected (0.47%)
 
 🎯 DETAILED THREAT ANALYSIS
-─────────────────────────────────────────────────
+────────────────────────────────────────
 🚨 Lateral Movement: 3 suspicious activities
 🚨 Data Exfiltration: 2 suspicious transfers
 🚨 ICS Anomalies: 5 anomaly types
 
-🔴 TOP 10 ANOMALIES:
-timestamp            src_ip        dst_ip       bytes    score
-2025-10-08 09:15:23  10.0.1.100   203.45.67.89  5000000  -0.95
+🔴 TOP ANOMALIES:
+10.0.1.100 → 203.45.67.89 | 5MB | score: -0.95
 ```
 
----
+## 💡 Best Practices
 
-## 📞 Next Steps
+✅ **Training:** Dùng clean normal traffic only, ít nhất 1000+ flows, retrain hàng tháng
+✅ **Detection:** Review top anomalies manually, tune contamination theo false positive rate
+✅ **Production:** Integrate với SIEM, setup alerts cho high-risk events
 
-1. **Test**: Run `python demo.py`
-2. **Use your data**: Export NetFlow, train, detect
-3. **Integrate**: Connect to SIEM
-4. **Deploy**: Use Docker for production
-5. **Monitor**: Set up alerts
-
----
-
-## 🏆 Features
+## 🏆 Key Features
 
 ✅ Zero-day detection (behavior-based)
-✅ ICS protocol-aware
+✅ ICS protocol-aware (Modbus, DNP3, S7, OPC UA)
 ✅ No signatures needed
 ✅ Low false positive rate
-✅ Real-time capable
-✅ Production-ready (Docker)
-✅ Interpretable results
+✅ PCAP/Wireshark support
+✅ Auto-generated professional reports
 
 ---
 
-**🔐 Protect your ICS/SCADA network with AI! 🚀**
+**🔐 Bảo vệ mạng ICS/SCADA của bạn với AI!**
 
-Run: `python demo.py`
+👉 Chạy ngay: `python demo.py`
