@@ -5,7 +5,20 @@ Chạy toàn bộ workflow: Generate Data -> Train -> Detect
 import subprocess
 import sys
 import os
+import shutil
 from pathlib import Path
+
+def clean_output_directory(output_dir='output'):
+    """Clean old output files before creating new analysis"""
+    output_path = Path(output_dir)
+    if output_path.exists():
+        print(f"\n🧹 Cleaning old output files in {output_dir}...")
+        # Remove all files in directory but keep the directory
+        for item in output_path.iterdir():
+            if item.is_file():
+                print(f"   Deleted: {item.name}")
+                item.unlink()
+        print("✅ Output directory cleaned\n")
 
 def run_command(cmd, description):
     """Run command và hiển thị output"""
@@ -33,6 +46,9 @@ def main():
     ║  AI-powered threat detection for Industrial Networks      ║
     ╚═══════════════════════════════════════════════════════════╝
     """)
+    
+    # Clean old output files
+    clean_output_directory('output')
     
     # Check directories
     Path("data").mkdir(exist_ok=True)

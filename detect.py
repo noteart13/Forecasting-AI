@@ -4,6 +4,7 @@ Detect Anomalies trong ICS/SCADA Network Traffic
 import argparse
 import yaml
 import json
+import shutil
 from pathlib import Path
 import logging
 import pandas as pd
@@ -16,6 +17,22 @@ logging.basicConfig(
     format='%(asctime)s - %(levelname)s - %(message)s'
 )
 logger = logging.getLogger(__name__)
+
+
+def clean_detection_output(output_path):
+    """Clean old detection files before creating new analysis"""
+    output_dir = Path(output_path).parent
+    if output_dir.exists():
+        logger.info(f"🧹 Cleaning old detection files...")
+        # Remove CSV files related to detection
+        for csv_file in output_dir.glob('*.csv'):
+            csv_file.unlink()
+            logger.info(f"   Deleted: {csv_file.name}")
+        # Remove txt and json summary files
+        for summary_file in output_dir.glob('attack_summary.*'):
+            summary_file.unlink()
+            logger.info(f"   Deleted: {summary_file.name}")
+        logger.info("✅ Old detection files cleaned")
 
 
 def main():
@@ -33,6 +50,9 @@ def main():
     logger.info("="*60)
     logger.info("🔍 ICS/SCADA ANOMALY DETECTION - ANALYSIS")
     logger.info("="*60)
+    
+    # Clean old detection output files
+    clean_detection_output(args.output)
     
     # Load data
     logger.info(f"\n📊 Loading data from {args.data}...")
@@ -125,6 +145,17 @@ def main():
         logger.info(f"  - Lateral Movement: Check lateral_movement.csv")
         logger.info(f"  - Data Exfiltration: Check data_exfiltration.csv")
         logger.info(f"  - ICS Anomalies: Check ics_anomalies.csv")
+        
+        # Generate comprehensive attack summary report
+        logger.info("\n📝 Generating Attack Summary Report...")
+        summary_path = Path(args.output).parent / 'attack_summary.txt'
+        detector.generate_attack_summary(
+            results=results,
+            lateral_df=lateral if len(lateral) > 0 else None,
+            exfil_df=exfil if len(exfil) > 0 else None,
+            ics_df=ics_anomalies if len(ics_anomalies) > 0 else None,
+            output_path=str(summary_path)
+        )
     
     logger.info("\n" + "="*60)
     logger.info("✅ DETECTION COMPLETED!")

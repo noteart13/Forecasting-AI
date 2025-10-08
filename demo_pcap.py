@@ -5,6 +5,7 @@ Hỗ trợ phát hiện Lateral Movement, Data Exfiltration và ICS Anomalies
 import argparse
 import logging
 import sys
+import shutil
 from pathlib import Path
 
 from src.network_loader import NetworkLoader
@@ -15,6 +16,24 @@ logging.basicConfig(
     format='%(asctime)s - %(levelname)s - %(message)s'
 )
 logger = logging.getLogger(__name__)
+
+
+def clean_output_directory(output_dir):
+    """Clean old output files before creating new analysis"""
+    output_path = Path(output_dir)
+    if output_path.exists():
+        logger.info(f"🧹 Cleaning old output files in {output_dir}...")
+        # Remove all files in directory but keep the directory
+        for item in output_path.iterdir():
+            if item.is_file():
+                item.unlink()
+                logger.info(f"   Deleted: {item.name}")
+            elif item.is_dir():
+                shutil.rmtree(item)
+                logger.info(f"   Deleted folder: {item.name}")
+        logger.info("✅ Output directory cleaned")
+    else:
+        logger.info(f"📁 Creating new output directory: {output_dir}")
 
 
 def main():
@@ -39,8 +58,9 @@ def main():
         logger.error(f"❌ PCAP file not found: {args.pcap}")
         sys.exit(1)
     
-    # Create output directory
+    # Clean old output files and create fresh directory
     output_dir = Path(args.output)
+    clean_output_directory(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
     
     try:
@@ -157,6 +177,18 @@ def main():
                     logger.info("\n🔴 CRITICAL ICS ANOMALIES:")
                     for _, row in critical_anomalies.iterrows():
                         logger.info(f"   - {row['type']}: {row['description']}")
+            
+            # Generate comprehensive attack summary report
+            logger.info("\n📝 Generating Attack Summary Report...")
+            summary_path = output_dir / 'attack_summary.txt'
+            detector.generate_attack_summary(
+                results=results,
+                lateral_df=lateral if len(lateral) > 0 else None,
+                exfil_df=exfil if len(exfil) > 0 else None,
+                ics_df=ics_anomalies if len(ics_anomalies) > 0 else None,
+                output_path=str(summary_path),
+                pcap_file=args.pcap
+            )
         
         # Summary report
         logger.info("\n" + "="*80)
@@ -176,6 +208,8 @@ def main():
             logger.info(f"  - Lateral Movement: {output_dir / 'lateral_movement.csv'}")
             logger.info(f"  - Data Exfiltration: {output_dir / 'data_exfiltration.csv'}")
             logger.info(f"  - ICS Anomalies: {output_dir / 'ics_anomalies.csv'}")
+            logger.info(f"  - 📋 ATTACK SUMMARY: {output_dir / 'attack_summary.txt'}")
+            logger.info(f"  - 📋 JSON SUMMARY: {output_dir / 'attack_summary.json'}")
         
         logger.info("\n" + "="*80)
         logger.info("✅ PCAP ANALYSIS COMPLETED!")
