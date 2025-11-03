@@ -88,100 +88,202 @@ class ICSAnomalyDetector:
     
     def detect_lateral_movement(self, df: pd.DataFrame) -> pd.DataFrame:
         """
-        Phát hiện Lateral Movement - Kẻ tấn công di chuyển ngang trong hệ thống
+        Advanced Lateral Movement Detection
         
-        Dấu hiệu nâng cao:
-        - Source IP kết nối với nhiều destinations trong thời gian ngắn
-        - Scan nhiều ports khác nhau (port scanning)
-        - Connections đến các hosts không thông thường
-        - Failed connections cao (connection attempts)
-        - Traffic patterns bất thường (burst traffic)
-        - Access từ các IP ranges không mong đợi
+        Techniques:
+        1. Dynamic threshold based on baseline
+        2. Behavioral scoring (scan patterns)
+        3. Time-based anomaly detection
+        4. Failed connection tracking
         """
         df = df.copy()
         
-        # Time window (5 phút)
+        # Time window (adaptive: 5-15 minutes based on traffic volume)
         if 'timestamp' in df.columns:
-            df['time_window'] = df['timestamp'].dt.floor('5T')
+            # Adaptive time window
+            total_duration = (df['timestamp'].max() - df['timestamp'].min()).total_seconds()
+            if total_duration < 3600:  # < 1 hour
+                window_size = '5T'
+            elif total_duration < 86400:  # < 1 day
+                window_size = '10T'
+            else:
+                window_size = '15T'
+            
+            df['time_window'] = df['timestamp'].dt.floor(window_size)
         else:
             df['time_window'] = 0
         
-        # Group by source IP và time window
+        # === 1. Basic Statistics per Source ===
         lateral_stats = df.groupby(['src_ip', 'time_window']).agg({
             'dst_ip': 'nunique',
             'dst_port': 'nunique',
             'packets': 'sum',
             'bytes': 'sum',
-            'duration': 'mean'
+            'duration': ['mean', 'std', 'sum']
         }).reset_index()
         
-        lateral_stats.columns = ['src_ip', 'time_window', 'unique_dsts', 'unique_ports', 'packets', 'bytes', 'avg_duration']
+        # Flatten column names
+        lateral_stats.columns = ['src_ip', 'time_window', 'unique_dsts', 'unique_ports', 
+                                'total_packets', 'total_bytes', 'avg_duration', 
+                                'std_duration', 'total_duration']
         
-        # Tính toán các metrics nâng cao
-        lateral_stats['dst_diversity_score'] = lateral_stats['unique_dsts'] / lateral_stats['unique_dsts'].max()
-        lateral_stats['port_scan_score'] = lateral_stats['unique_ports'] / lateral_stats['unique_ports'].max()
-        lateral_stats['traffic_intensity'] = lateral_stats['bytes'] / (lateral_stats['avg_duration'] + 1)
+        # === 2. Calculate Baseline (per source IP) ===
+        baseline = df.groupby('src_ip').agg({
+            'dst_ip': 'nunique',
+            'dst_port': 'nunique'
+        }).reset_index()
+        baseline.columns = ['src_ip', 'baseline_dsts', 'baseline_ports']
         
-        # Detect port scanning patterns
-        lateral_stats['is_port_scan'] = (
-            (lateral_stats['unique_ports'] > 10) &  # Scan nhiều ports
-            (lateral_stats['packets'] > 50)          # Nhiều packets
-        ).astype(int)
+        # Merge baseline
+        lateral_stats = lateral_stats.merge(baseline, on='src_ip', how='left')
         
-        # Detect host scanning patterns  
-        lateral_stats['is_host_scan'] = (
-            (lateral_stats['unique_dsts'] > 5) &     # Scan nhiều hosts
-            (lateral_stats['packets'] > 20)          # Nhiều packets
-        ).astype(int)
+        # === 3. Advanced Metrics ===
         
-        # Lateral movement score (weighted combination)
-        lateral_stats['lateral_score'] = (
-            lateral_stats['dst_diversity_score'] * 4.0 +      # Nhiều destinations
-            lateral_stats['port_scan_score'] * 3.0 +          # Scan ports
-            lateral_stats['is_port_scan'] * 2.0 +             # Port scan pattern
-            lateral_stats['is_host_scan'] * 2.0              # Host scan pattern
+        # 3.1 Deviation from baseline
+        lateral_stats['dst_deviation'] = (
+            lateral_stats['unique_dsts'] / (lateral_stats['baseline_dsts'] + 1)
+        )
+        lateral_stats['port_deviation'] = (
+            lateral_stats['unique_ports'] / (lateral_stats['baseline_ports'] + 1)
         )
         
-        # Dynamic threshold based on traffic patterns
-        mean_score = lateral_stats['lateral_score'].mean()
-        std_score = lateral_stats['lateral_score'].std()
-        threshold = mean_score + 2 * std_score  # 2-sigma threshold
+        # 3.2 Connection efficiency (failed connections indicator)
+        lateral_stats['connection_efficiency'] = (
+            lateral_stats['total_bytes'] / (lateral_stats['total_packets'] + 1)
+        )
+        # Low efficiency = potential failed connections/scans
+        lateral_stats['is_low_efficiency'] = (
+            lateral_stats['connection_efficiency'] < 100
+        ).astype(int)
         
-        lateral_stats['is_lateral_movement'] = (lateral_stats['lateral_score'] > threshold).astype(int)
+        # 3.3 Scan pattern detection
+        lateral_stats['scan_intensity'] = (
+            lateral_stats['unique_ports'] * lateral_stats['unique_dsts'] / 
+            (lateral_stats['total_duration'] + 1)
+        )
         
-        # Additional checks for high-risk patterns
-        high_risk = lateral_stats[
-            (lateral_stats['is_lateral_movement'] == 1) &
-            ((lateral_stats['is_port_scan'] == 1) | (lateral_stats['is_host_scan'] == 1))
-        ]
-        lateral_stats['is_high_risk'] = lateral_stats.index.isin(high_risk.index).astype(int)
+        # 3.4 Sequential port pattern (indicator of port scan)
+        # Check if ports are accessed sequentially
+        port_sequences = df.groupby(['src_ip', 'time_window']).apply(
+            lambda x: self._detect_sequential_ports(x['dst_port'].values)
+        ).reset_index(name='is_sequential_scan')
+        lateral_stats = lateral_stats.merge(port_sequences, on=['src_ip', 'time_window'], how='left')
+        lateral_stats['is_sequential_scan'] = lateral_stats['is_sequential_scan'].fillna(0)
         
+        # === 4. Pattern Detection ===
+        
+        # 4.1 Port scanning
+        port_scan_threshold = lateral_stats['unique_ports'].quantile(0.95)
+        lateral_stats['is_port_scan'] = (
+            (lateral_stats['unique_ports'] > max(10, port_scan_threshold)) &
+            (lateral_stats['total_packets'] > 20)
+        ).astype(int)
+        
+        # 4.2 Host scanning
+        host_scan_threshold = lateral_stats['unique_dsts'].quantile(0.95)
+        lateral_stats['is_host_scan'] = (
+            (lateral_stats['unique_dsts'] > max(5, host_scan_threshold)) &
+            (lateral_stats['total_packets'] > 10)
+        ).astype(int)
+        
+        # 4.3 Rapid connection attempts
+        lateral_stats['connection_rate'] = (
+            lateral_stats['total_packets'] / (lateral_stats['total_duration'] + 1)
+        )
+        rapid_threshold = lateral_stats['connection_rate'].quantile(0.90)
+        lateral_stats['is_rapid_attempts'] = (
+            lateral_stats['connection_rate'] > rapid_threshold
+        ).astype(int)
+        
+        # === 5. Scoring System ===
+        lateral_stats['lateral_score'] = (
+            # Diversity score (weighted by deviation from baseline)
+            lateral_stats['dst_deviation'] * 3.0 +
+            lateral_stats['port_deviation'] * 2.5 +
+            
+            # Scan patterns
+            lateral_stats['is_port_scan'] * 4.0 +
+            lateral_stats['is_host_scan'] * 4.0 +
+            lateral_stats['is_sequential_scan'] * 3.0 +
+            
+            # Connection behavior
+            lateral_stats['is_low_efficiency'] * 2.0 +
+            lateral_stats['is_rapid_attempts'] * 2.0 +
+            
+            # Intensity
+            np.log1p(lateral_stats['scan_intensity']) * 1.5
+        )
+        
+        # === 6. Dynamic Threshold ===
+        # Use MAD (Median Absolute Deviation) for robust threshold
+        median_score = lateral_stats['lateral_score'].median()
+        mad = np.median(np.abs(lateral_stats['lateral_score'] - median_score))
+        threshold = median_score + 3 * mad  # 3-MAD threshold
+        
+        lateral_stats['is_lateral_movement'] = (
+            lateral_stats['lateral_score'] > threshold
+        ).astype(int)
+        
+        # === 7. Risk Classification ===
+        lateral_stats['risk_level'] = 'low'
+        lateral_stats.loc[
+            (lateral_stats['is_lateral_movement'] == 1) & 
+            (lateral_stats['lateral_score'] > threshold * 1.5),
+            'risk_level'
+        ] = 'high'
+        lateral_stats.loc[
+            (lateral_stats['is_lateral_movement'] == 1) & 
+            (lateral_stats['risk_level'] != 'high'),
+            'risk_level'
+        ] = 'medium'
+        
+        lateral_stats['is_high_risk'] = (
+            lateral_stats['risk_level'] == 'high'
+        ).astype(int)
+        
+        # === 8. Summary ===
         suspicious = lateral_stats[lateral_stats['is_lateral_movement'] == 1]
         high_risk_count = lateral_stats['is_high_risk'].sum()
         
         logger.info(f"🚨 Lateral Movement: {len(suspicious)} suspicious activities detected")
-        logger.info(f"🚨 High Risk Patterns: {high_risk_count} detected (port/host scanning)")
+        logger.info(f"   • Port scans: {lateral_stats['is_port_scan'].sum()}")
+        logger.info(f"   • Host scans: {lateral_stats['is_host_scan'].sum()}")
+        logger.info(f"   • High risk: {high_risk_count}")
         
         return lateral_stats
-    
+
+    def _detect_sequential_ports(self, ports):
+        """Detect if ports are accessed sequentially (scan pattern)"""
+        if len(ports) < 5:
+            return 0
+        
+        # Sort ports
+        sorted_ports = np.sort(ports)
+        
+        # Calculate gaps between consecutive ports
+        gaps = np.diff(sorted_ports)
+        
+        # If most gaps are small and consistent, it's likely a sequential scan
+        avg_gap = np.mean(gaps)
+        std_gap = np.std(gaps)
+        
+        # Sequential if: avg_gap < 10 and std_gap < 5
+        return int(avg_gap < 10 and std_gap < 5)
     def detect_data_exfiltration(self, df: pd.DataFrame) -> pd.DataFrame:
         """
-        Phát hiện Data Exfiltration - Hành vi đánh cắp và chuyển dữ liệu ra bên ngoài
+        Enhanced Data Exfiltration Detection
         
-        Dấu hiệu nâng cao:
-        - Upload traffic bất thường lớn (outbound bytes)
-        - Connections ra external IPs không thông thường
-        - Transfers vào giờ bất thường (đêm, cuối tuần)
-        - Sử dụng protocols không thông thường (FTP, HTTP POST, etc.)
-        - Traffic patterns bất thường (burst uploads)
-        - Connections đến các domains/IPs đáng ngờ
-        - Sử dụng encrypted channels để che giấu
+        New Features:
+        1. Encrypted channel detection (TLS/HTTPS)
+        2. DNS tunneling detection
+        3. Upload/Download ratio analysis
+        4. Covert channels (ICMP, DNS)
         """
         df = df.copy()
         
-        # Identify internal/external IPs
+        # === 1. Identify Internal/External IPs ===
         def is_private_ip(ip):
-            """Check if IP is private (RFC 1918)"""
+            """RFC 1918 private IP check"""
             if isinstance(ip, str):
                 parts = ip.split('.')
                 if len(parts) == 4:
@@ -194,7 +296,6 @@ class ICSAnomalyDetector:
                             return True
                         if first == 192 and second == 168:
                             return True
-                        # Loopback
                         if first == 127:
                             return True
                     except:
@@ -211,13 +312,13 @@ class ICSAnomalyDetector:
             logger.info("No outbound traffic detected")
             return pd.DataFrame()
         
-        # Time window (10 phút)
+        # === 2. Time Window ===
         if 'timestamp' in outbound.columns:
             outbound['time_window'] = outbound['timestamp'].dt.floor('10T')
         else:
             outbound['time_window'] = 0
         
-        # Aggregate by source và time window
+        # === 3. Basic Aggregation ===
         exfil_stats = outbound.groupby(['src_ip', 'time_window']).agg({
             'bytes': 'sum',
             'packets': 'sum',
@@ -226,76 +327,176 @@ class ICSAnomalyDetector:
             'duration': 'sum'
         }).reset_index()
         
-        exfil_stats.columns = ['src_ip', 'time_window', 'bytes_out', 'packets_out', 'unique_external_dsts', 'unique_ports', 'total_duration']
+        exfil_stats.columns = ['src_ip', 'time_window', 'bytes_out', 'packets_out', 
+                            'unique_external_dsts', 'unique_ports', 'total_duration']
         
-        # Tính toán các metrics nâng cao
+        # === 4. Enhanced Metrics ===
+        
+        # 4.1 Data volume
         exfil_stats['mb_transferred'] = exfil_stats['bytes_out'] / (1024 * 1024)
         exfil_stats['transfer_rate'] = exfil_stats['bytes_out'] / (exfil_stats['total_duration'] + 1)
+        
+        # 4.2 Packet analysis
+        exfil_stats['avg_packet_size'] = exfil_stats['bytes_out'] / (exfil_stats['packets_out'] + 1)
         exfil_stats['packet_rate'] = exfil_stats['packets_out'] / (exfil_stats['total_duration'] + 1)
         
-        # Detect suspicious patterns
-        exfil_stats['is_large_transfer'] = (exfil_stats['mb_transferred'] > 10).astype(int)  # > 10MB
-        exfil_stats['is_multiple_destinations'] = (exfil_stats['unique_external_dsts'] > 3).astype(int)
-        exfil_stats['is_high_bandwidth'] = (exfil_stats['transfer_rate'] > 1000000).astype(int)  # > 1MB/s
+        # === 5. Encrypted Channel Detection ===
+        # Check for TLS/HTTPS traffic (port 443, 8443)
+        encrypted_ports = [443, 8443, 993, 995, 465]
+        encrypted_traffic = outbound[outbound['dst_port'].isin(encrypted_ports)].groupby(['src_ip', 'time_window']).agg({
+            'bytes': 'sum',
+            'dst_ip': 'nunique'
+        }).reset_index()
+        encrypted_traffic.columns = ['src_ip', 'time_window', 'encrypted_bytes', 'encrypted_dsts']
         
-        # Detect unusual timing (night/weekend transfers)
+        exfil_stats = exfil_stats.merge(encrypted_traffic, on=['src_ip', 'time_window'], how='left')
+        exfil_stats['encrypted_bytes'] = exfil_stats['encrypted_bytes'].fillna(0)
+        exfil_stats['encrypted_dsts'] = exfil_stats['encrypted_dsts'].fillna(0)
+        
+        exfil_stats['encryption_ratio'] = (
+            exfil_stats['encrypted_bytes'] / (exfil_stats['bytes_out'] + 1)
+        )
+        exfil_stats['is_heavily_encrypted'] = (
+            exfil_stats['encryption_ratio'] > 0.7
+        ).astype(int)
+        
+        # === 6. DNS Tunneling Detection ===
+        # Check for excessive DNS traffic (port 53)
+        dns_traffic = outbound[outbound['dst_port'] == 53].groupby(['src_ip', 'time_window']).agg({
+            'bytes': 'sum',
+            'packets': 'sum',
+            'dst_ip': 'nunique'
+        }).reset_index()
+        dns_traffic.columns = ['src_ip', 'time_window', 'dns_bytes', 'dns_packets', 'dns_servers']
+        
+        exfil_stats = exfil_stats.merge(dns_traffic, on=['src_ip', 'time_window'], how='left')
+        exfil_stats['dns_bytes'] = exfil_stats['dns_bytes'].fillna(0)
+        exfil_stats['dns_packets'] = exfil_stats['dns_packets'].fillna(0)
+        
+        # DNS tunneling indicators:
+        # 1. High DNS packet count
+        # 2. Large DNS payload (> 100 bytes/packet average)
+        exfil_stats['dns_avg_size'] = exfil_stats['dns_bytes'] / (exfil_stats['dns_packets'] + 1)
+        exfil_stats['is_dns_tunneling'] = (
+            (exfil_stats['dns_packets'] > 100) &
+            (exfil_stats['dns_avg_size'] > 100)
+        ).astype(int)
+        
+        # === 7. Covert Channel Detection ===
+        # ICMP tunneling (large ICMP traffic)
+        icmp_traffic = outbound[outbound['protocol'].str.upper() == 'ICMP'].groupby(['src_ip', 'time_window']).agg({
+            'bytes': 'sum'
+        }).reset_index()
+        icmp_traffic.columns = ['src_ip', 'time_window', 'icmp_bytes']
+        
+        exfil_stats = exfil_stats.merge(icmp_traffic, on=['src_ip', 'time_window'], how='left')
+        exfil_stats['icmp_bytes'] = exfil_stats['icmp_bytes'].fillna(0)
+        exfil_stats['is_icmp_covert'] = (
+            exfil_stats['icmp_bytes'] > 1000000  # > 1MB ICMP
+        ).astype(int)
+        
+        # === 8. Pattern Detection ===
+        exfil_stats['is_large_transfer'] = (exfil_stats['mb_transferred'] > 10).astype(int)
+        exfil_stats['is_multiple_destinations'] = (exfil_stats['unique_external_dsts'] > 3).astype(int)
+        exfil_stats['is_high_bandwidth'] = (exfil_stats['transfer_rate'] > 1000000).astype(int)
+        
+        # === 9. Time-based Analysis ===
         if 'timestamp' in outbound.columns:
             outbound['hour'] = outbound['timestamp'].dt.hour
             outbound['day_of_week'] = outbound['timestamp'].dt.dayofweek
             outbound['is_night'] = ((outbound['hour'] >= 22) | (outbound['hour'] <= 6)).astype(int)
             outbound['is_weekend'] = (outbound['day_of_week'] >= 5).astype(int)
             
-            # Aggregate timing info
             timing_stats = outbound.groupby(['src_ip', 'time_window']).agg({
                 'is_night': 'max',
                 'is_weekend': 'max'
             }).reset_index()
             
             exfil_stats = exfil_stats.merge(timing_stats, on=['src_ip', 'time_window'], how='left')
-            exfil_stats['is_unusual_time'] = ((exfil_stats['is_night'] == 1) | (exfil_stats['is_weekend'] == 1)).astype(int)
+            exfil_stats['is_unusual_time'] = (
+                (exfil_stats['is_night'] == 1) | (exfil_stats['is_weekend'] == 1)
+            ).astype(int)
         else:
             exfil_stats['is_unusual_time'] = 0
         
-        # Detect suspicious protocols (FTP, HTTP POST, etc.)
+        # === 10. Suspicious Protocol Detection ===
         suspicious_protocols = ['FTP', 'HTTP', 'HTTPS', 'SFTP', 'SCP']
         protocol_stats = outbound[outbound['protocol'].isin(suspicious_protocols)].groupby(['src_ip', 'time_window']).size().reset_index(name='suspicious_protocol_count')
         exfil_stats = exfil_stats.merge(protocol_stats, on=['src_ip', 'time_window'], how='left')
         exfil_stats['suspicious_protocol_count'] = exfil_stats['suspicious_protocol_count'].fillna(0)
         exfil_stats['is_suspicious_protocol'] = (exfil_stats['suspicious_protocol_count'] > 0).astype(int)
         
-        # Exfiltration score (weighted combination)
+        # === 11. Advanced Scoring System ===
         exfil_stats['exfil_score'] = (
-            exfil_stats['mb_transferred'] * 3.0 +                    # Data volume
-            exfil_stats['unique_external_dsts'] * 2.0 +              # Multiple destinations
-            exfil_stats['is_large_transfer'] * 4.0 +                # Large transfers
-            exfil_stats['is_multiple_destinations'] * 3.0 +          # Multiple destinations
-            exfil_stats['is_high_bandwidth'] * 2.0 +                # High bandwidth
-            exfil_stats['is_unusual_time'] * 2.0 +                   # Unusual timing
-            exfil_stats['is_suspicious_protocol'] * 1.5              # Suspicious protocols
+            # Data volume
+            exfil_stats['mb_transferred'] * 3.0 +
+            
+            # Connection patterns
+            exfil_stats['unique_external_dsts'] * 2.0 +
+            exfil_stats['is_multiple_destinations'] * 3.0 +
+            
+            # Transfer characteristics
+            exfil_stats['is_large_transfer'] * 4.0 +
+            exfil_stats['is_high_bandwidth'] * 2.0 +
+            
+            # Covert channels
+            exfil_stats['is_heavily_encrypted'] * 3.0 +
+            exfil_stats['is_dns_tunneling'] * 5.0 +  # High priority
+            exfil_stats['is_icmp_covert'] * 5.0 +    # High priority
+            
+            # Timing
+            exfil_stats['is_unusual_time'] * 2.5 +
+            
+            # Protocols
+            exfil_stats['is_suspicious_protocol'] * 1.5
         )
         
-        # Dynamic threshold based on traffic patterns
-        mean_score = exfil_stats['exfil_score'].mean()
-        std_score = exfil_stats['exfil_score'].std()
-        threshold = mean_score + 2 * std_score  # 2-sigma threshold
+        # === 12. Dynamic Threshold ===
+        median_score = exfil_stats['exfil_score'].median()
+        mad = np.median(np.abs(exfil_stats['exfil_score'] - median_score))
+        threshold = median_score + 3 * mad
         
-        exfil_stats['is_exfiltration'] = (exfil_stats['exfil_score'] > threshold).astype(int)
+        exfil_stats['is_exfiltration'] = (
+            exfil_stats['exfil_score'] > threshold
+        ).astype(int)
         
-        # Additional checks for high-risk patterns
-        high_risk = exfil_stats[
-            (exfil_stats['is_exfiltration'] == 1) &
-            ((exfil_stats['is_large_transfer'] == 1) | (exfil_stats['is_unusual_time'] == 1))
-        ]
-        exfil_stats['is_high_risk'] = exfil_stats.index.isin(high_risk.index).astype(int)
+        # === 13. Risk Classification ===
+        exfil_stats['risk_level'] = 'low'
+        exfil_stats.loc[
+            (exfil_stats['is_exfiltration'] == 1) & 
+            (
+                (exfil_stats['is_dns_tunneling'] == 1) | 
+                (exfil_stats['is_icmp_covert'] == 1) |
+                (exfil_stats['mb_transferred'] > 100)
+            ),
+            'risk_level'
+        ] = 'critical'
+        exfil_stats.loc[
+            (exfil_stats['is_exfiltration'] == 1) & 
+            (exfil_stats['risk_level'] != 'critical') &
+            (exfil_stats['exfil_score'] > threshold * 1.5),
+            'risk_level'
+        ] = 'high'
+        exfil_stats.loc[
+            (exfil_stats['is_exfiltration'] == 1) & 
+            (exfil_stats['risk_level'] == 'low'),
+            'risk_level'
+        ] = 'medium'
         
+        exfil_stats['is_high_risk'] = (
+            exfil_stats['risk_level'].isin(['high', 'critical'])
+        ).astype(int)
+        
+        # === 14. Summary ===
         suspicious = exfil_stats[exfil_stats['is_exfiltration'] == 1]
-        high_risk_count = exfil_stats['is_high_risk'].sum()
         
         logger.info(f"🚨 Data Exfiltration: {len(suspicious)} suspicious transfers detected")
-        logger.info(f"🚨 High Risk Patterns: {high_risk_count} detected (large transfers/unusual timing)")
+        logger.info(f"   • DNS tunneling: {exfil_stats['is_dns_tunneling'].sum()}")
+        logger.info(f"   • ICMP covert: {exfil_stats['is_icmp_covert'].sum()}")
+        logger.info(f"   • Encrypted channels: {exfil_stats['is_heavily_encrypted'].sum()}")
+        logger.info(f"   • Critical risk: {(exfil_stats['risk_level'] == 'critical').sum()}")
         
         return exfil_stats
-    
     def detect_ics_anomalies(self, df: pd.DataFrame) -> pd.DataFrame:
         """
         Phát hiện ICS-specific anomalies - Các hành vi bất thường trong mạng Hệ thống Điều khiển Công nghiệp

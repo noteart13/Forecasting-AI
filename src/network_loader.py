@@ -89,29 +89,36 @@ class NetworkLoader:
         
         df = self.data.copy()
         
-        # Convert timestamp - try multiple formats
+        # ===== FIXED TIMESTAMP HANDLING =====
         if 'timestamp' in df.columns:
-            # Try Unix timestamp first
+            # Convert to numeric first
+            df['timestamp'] = pd.to_numeric(df['timestamp'], errors='coerce')
+            
+            # Detect timestamp scale
+            max_ts = df['timestamp'].max()
+            
+            if max_ts > 1e15:  # Nanoseconds (> year 33658)
+                logger.info("⏰ Detected nanosecond timestamps")
+                df['timestamp'] = df['timestamp'] / 1e9
+            elif max_ts > 1e12:  # Microseconds (> year 33658)
+                logger.info("⏰ Detected microsecond timestamps")
+                df['timestamp'] = df['timestamp'] / 1e6
+            elif max_ts > 1e10:  # Milliseconds (> year 2286)
+                logger.info("⏰ Detected millisecond timestamps")
+                df['timestamp'] = df['timestamp'] / 1000
+            else:
+                logger.info("⏰ Detected second timestamps")
+            
+            # Convert to datetime
             try:
-                # Convert to float first to handle large numbers
-                df['timestamp'] = pd.to_numeric(df['timestamp'], errors='coerce')
-                # Check if timestamp is reasonable (not too large)
-                if df['timestamp'].max() > 2e9:  # Year 2033+, likely microseconds or nanoseconds
-                    logger.warning("Timestamp appears to be in future, adjusting...")
-                    df['timestamp'] = df['timestamp'] / 1000  # Convert from milliseconds
                 df['timestamp'] = pd.to_datetime(df['timestamp'], unit='s')
             except Exception as e:
-                # Try parsing as datetime string
-                try:
-                    df['timestamp'] = pd.to_datetime(df['timestamp'])
-                except:
-                    # If all fail, create dummy datetime
-                    logger.warning("Cannot parse timestamp, using sequential datetime")
-                    df['timestamp'] = pd.date_range(start='2024-01-01', periods=len(df), freq='1min')
+                logger.warning(f"Timestamp conversion failed: {e}, using sequential time")
+                df['timestamp'] = pd.date_range(start='2024-01-01', periods=len(df), freq='1min')
             
             df = df.sort_values('timestamp').reset_index(drop=True)
         
-        # Fill missing (but not timestamp)
+        # Fill missing numeric values
         numeric_cols = df.select_dtypes(include=[np.number]).columns
         df[numeric_cols] = df[numeric_cols].fillna(0)
         
@@ -376,10 +383,14 @@ class NetworkLoader:
     
     def _aggregate_flows(self, df: pd.DataFrame) -> pd.DataFrame:
         """
-        Aggregate packets into flows based on 5-tuple
-        (src_ip, dst_ip, src_port, dst_port, protocol)
+        Aggregate packets into flows with session tracking
+        - Group by 5-tuple
+        - Split sessions based on time gaps (> 60 seconds = new session)
         """
-        logger.info("🔄 Aggregating packets into flows...")
+        logger.info("🔄 Aggregating packets into flows with session tracking...")
+        
+        # Sort by time
+        df = df.sort_values('timestamp').reset_index(drop=True)
         
         # Group by 5-tuple
         flow_groups = df.groupby(['src_ip', 'dst_ip', 'src_port', 'dst_port', 'protocol'])
@@ -387,28 +398,65 @@ class NetworkLoader:
         aggregated_flows = []
         
         for (src_ip, dst_ip, src_port, dst_port, protocol), group in flow_groups:
-            # Calculate flow metrics
-            start_time = group['timestamp'].min()
-            end_time = group['timestamp'].max()
-            duration = (end_time - start_time).total_seconds()
+            # Sort group by timestamp
+            group = group.sort_values('timestamp').reset_index(drop=True)
             
-            # If duration is 0 (single packet), set to 1 second
-            if duration == 0:
-                duration = 1.0
+            # Session tracking: split if gap > 60 seconds
+            SESSION_TIMEOUT = 60  # seconds
             
-            aggregated_flows.append({
-                'timestamp': start_time,
-                'src_ip': src_ip,
-                'dst_ip': dst_ip,
-                'src_port': src_port,
-                'dst_port': dst_port,
-                'protocol': protocol,
-                'bytes': group['bytes'].sum(),
-                'packets': group['packets'].sum(),
-                'duration': duration
-            })
+            session_start = 0
+            for i in range(1, len(group)):
+                time_gap = (group.loc[i, 'timestamp'] - 
+                        group.loc[i-1, 'timestamp']).total_seconds()
+                
+                # If gap > timeout, create new session
+                if time_gap > SESSION_TIMEOUT:
+                    # Save previous session
+                    session_data = group.iloc[session_start:i]
+                    aggregated_flows.append(
+                        self._create_flow_record(
+                            src_ip, dst_ip, src_port, dst_port, 
+                            protocol, session_data
+                        )
+                    )
+                    session_start = i
+            
+            # Save last session
+            session_data = group.iloc[session_start:]
+            aggregated_flows.append(
+                self._create_flow_record(
+                    src_ip, dst_ip, src_port, dst_port, 
+                    protocol, session_data
+                )
+            )
         
         result_df = pd.DataFrame(aggregated_flows)
-        logger.info(f"✅ Aggregated into {len(result_df)} flows")
+        logger.info(f"✅ Aggregated into {len(result_df)} flows ({len(df)} packets)")
         
         return result_df
+
+    def _create_flow_record(self, src_ip, dst_ip, src_port, dst_port, 
+                        protocol, packets_df):
+        """Create flow record from packet group"""
+        start_time = packets_df['timestamp'].min()
+        end_time = packets_df['timestamp'].max()
+        duration = (end_time - start_time).total_seconds()
+        
+        # Minimum duration = 0.001s (1ms)
+        if duration == 0:
+            duration = 0.001
+        
+        return {
+            'timestamp': start_time,
+            'src_ip': src_ip,
+            'dst_ip': dst_ip,
+            'src_port': src_port,
+            'dst_port': dst_port,
+            'protocol': protocol,
+            'bytes': int(packets_df['bytes'].sum()),
+            'packets': int(packets_df['packets'].sum()),
+            'duration': float(duration),
+            # Additional metrics
+            'packet_rate': float(packets_df['packets'].sum() / duration) if duration > 0 else 0,
+            'byte_rate': float(packets_df['bytes'].sum() / duration) if duration > 0 else 0
+        }
